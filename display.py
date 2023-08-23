@@ -1,7 +1,9 @@
 from det3d.core.bbox.box_np_ops import center_to_corner_box3d
 import open3d as o3d
 import numpy as np 
-import pickle 
+import pickle
+import os
+import time
 
 def corners_to_lines(qs, color=[204/255, 0, 0]):
     """ Draw 3d bounding box in image
@@ -43,50 +45,68 @@ def plot_boxes(boxes, score_thresh):
         visuals.append(corners_to_lines(corner, [1, 0, 0]))
     return visuals
 
-def main():
-    # obj = pickle.load(open('/home/xiaxinkai/github/WaymoSeq1/lidar/seq_1_frame_1.pkl', 'rb'))
-    # lidars = obj['lidars']
-    # xyz = lidars['points_xyz']
-
-    data_orig = np.fromfile('./lidars/seq_0_frame_100.bin', dtype=np.float32)
+def load_data(file_idx, bin_files):
+    data_file = bin_files[file_idx]
+    txt_file = data_file + '.txt'
+    
+    data_orig = np.fromfile(os.path.join('./lidars', data_file), dtype=np.float32)
     data_reshape = data_orig.reshape(-1,5)
-    xyz=data_reshape[:, :3]
+    xyz = data_reshape[:, :3]
+    boxes = np.loadtxt(os.path.join('./results', txt_file), dtype=np.float32)
 
-    print(data_orig.shape)
-    print(data_reshape.shape)
-    print(xyz.shape)
+    return xyz, boxes
 
-    boxes = np.loadtxt('./results/seq_0_frame_100.bin.txt', dtype=np.float32)
-    print(boxes.shape)
+def update_visualizer(vis, pcd, visual_boxes, file_idx, bin_files):
+    xyz, boxes = load_data(file_idx, bin_files)
+    
+    # 移除之前的几何体
+    vis.remove_geometry(pcd)
+    for visual_box in visual_boxes:
+        vis.remove_geometry(visual_box)
 
-    #创建窗口对象
+    # 更新点云数据
+    pcd.points = o3d.utility.Vector3dVector(xyz)
+    vis.add_geometry(pcd)
+
+    # 更新框
+    visual_boxes.clear()
+    new_boxes = plot_boxes(boxes, 0.5)
+    for visual_box in new_boxes:
+        vis.add_geometry(visual_box)
+        visual_boxes.append(visual_box)
+
+def main():
+    # 列出并排序bin文件
+    bin_files = sorted([f for f in os.listdir('./lidars') if f.endswith('.bin')])
+    
+    # 初始化文件索引
+    file_idx = [0]
+
     vis = o3d.visualization.Visualizer()
-    # #设置窗口标题
     vis.create_window(window_name="pointcloud_display")
-    #设置点云大小
     vis.get_render_option().point_size = 1
-    #设置颜色背景为黑色
     opt = vis.get_render_option()
     opt.background_color = np.asarray([0, 0, 0])
 
-    #创建点云对象
-    pcd=o3d.open3d.geometry.PointCloud()
-    #将点云数据转换为Open3d可以直接使用的数据类型
-    pcd.points = o3d.utility.Vector3dVector(xyz)
-    #设置点的颜色为白色
-    pcd.paint_uniform_color([1,1,1])
-    #将点云加入到窗口中
-    vis.add_geometry(pcd)
+    # 创建点云和框的列表
+    pcd = o3d.geometry.PointCloud()
+    visual_boxes = []
 
-    visual_boxes = plot_boxes(boxes, 0.5)
-    for item in visual_boxes:
-        print(type(item))
-    for visual_box in visual_boxes:
-        vis.add_geometry(visual_box)
+    # 加载并显示第一帧数据
+    update_visualizer(vis, pcd, visual_boxes, file_idx[0], bin_files)
 
-    vis.run()
-    vis.destroy_window()
+    while True:
+        vis.poll_events()
+        vis.update_renderer()
 
+        # 每隔2秒自动更新到下一帧
+        time.sleep(0.5)
+        file_idx[0] += 1
+        if file_idx[0] < len(bin_files):
+            update_visualizer(vis, pcd, visual_boxes, file_idx[0], bin_files)
+        else:
+            vis.destroy_window()  # 如果没有更多的文件，关闭可视化器
+            break
 
 if __name__=="__main__":
     main()
